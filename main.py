@@ -1,6 +1,14 @@
 from data import MVTecDataset, mvtec_classes, DEFAULT_SIZE
 from models import PatchCore
-from utils import backbones, dataset_scale_factor
+from utils import backbones, dataset_scale_factor, tsne, pca
+
+# For inference 
+import numpy as np
+from pathlib import Path 
+from PIL import Image
+import torch 
+from torchvision import transforms
+from sklearn.cluster import KMeans
 
 ALL_CLASSES = mvtec_classes()
 
@@ -55,8 +63,68 @@ def run_model(
     print(f'- Average image-level ROC AUC = {average_image_rocauc:.3f}\n')
     print(f'- Average pixel-level ROC AUC = {average_pixel_rocauc:.3f}\n')
 
+    return patch_core
 
 
 if __name__ == "__main__":
-    run_model(backbone='WideResNet50',
-              classes=["bottle"])
+    classes = "bottle"
+    model = run_model(backbone='WideResNet50',
+                      classes=[classes])
+    
+    # Inference image 
+    DATA_PATH = f"datasets/{classes}"
+    DEFAULT_SIZE = 224
+    DEFAULT_RESIZE = 256
+    IMAGENET_MEAN = torch.tensor([.485, .456, .406])  
+    IMAGENET_STD = torch.tensor([.229, .224, .225]) 
+
+    transform = transforms.Compose([         # Image transform
+                transforms.Resize(DEFAULT_RESIZE, interpolation=transforms.InterpolationMode.BICUBIC),
+                transforms.CenterCrop(DEFAULT_SIZE),  
+                transforms.ToTensor(),  
+                transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD), 
+            ])
+    
+    oks = list(Path(DATA_PATH).glob("test/good/*.png"))
+    ngs = [p for p in Path(DATA_PATH).glob("test/*/*.png") if "good" not in str(p)]
+    
+    paths = oks + ngs
+    labels = []
+    for p in paths:
+        if "good" in str(p):
+            labels.append(0)
+        elif "broken_large" in str(p):
+            labels.append(1)
+        elif "broken_small" in str(p):
+            labels.append(2)
+        elif "contamination" in str(p):
+            labels.append(3)
+
+    features, predictions = [], []
+    for p in paths:
+        # Image Load 
+        img = Image.open(str(p)).convert("RGB")
+        tensor_img = transform(img)
+
+        # Extract features
+        feature_maps = model.forward(tensor_img.unsqueeze(0))
+        avg = torch.nn.AvgPool2d(3, stride=1)
+        fmap_size = feature_maps[0].shape[-2]         # Feature map sizes h, w
+        resize = torch.nn.AdaptiveAvgPool2d(fmap_size)
+        resized_maps = [resize(avg(fmap)) for fmap in feature_maps]
+        concated_feature = torch.cat(resized_maps, 1)
+        concated_feature = concated_feature.flatten()
+        features.append(concated_feature.detach().cpu().numpy())
+
+        # Prediction 
+        preds = model.predict(tensor_img.unsqueeze(0))
+        predictions.append(preds)
+    
+    features = np.array(features)
+    pcaed_features = pca(features)
+
+    kmeans = KMeans(n_clusters=4)
+    full_cls = kmeans.fit_predict(features)
+    pcaed_cls = kmeans.fit_predict(pcaed_features)
+    
+    print("here")
