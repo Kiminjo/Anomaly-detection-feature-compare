@@ -9,6 +9,8 @@ from PIL import Image
 import torch 
 from torchvision import transforms
 from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+import seaborn as sns  
 
 ALL_CLASSES = mvtec_classes()
 
@@ -126,5 +128,26 @@ if __name__ == "__main__":
     kmeans = KMeans(n_clusters=4)
     full_cls = kmeans.fit_predict(features)
     pcaed_cls = kmeans.fit_predict(pcaed_features)
-    
+
+    tsne_features = tsne(pcaed_features)
+    x, y = tsne_features[:, 0], tsne_features[:, 1]
+    sns.scatterplot(x=x,
+                    y=y,
+                    hue=labels,
+                    style=full_cls,
+                    palette="tab10"
+                    )
+    plt.legend(labels=["ok", "large", "small", "cont"])
+    plt.savefig("full_scatter.jpg")
+    plt.clf()
+
+    sns.scatterplot(x=x,
+                    y=y,
+                    hue=labels,
+                    style=pcaed_cls,
+                    palette="tab10"
+                    )
+    plt.legend(labels=["ok", "large", "small", "cont"])
+    plt.savefig("pcaed_scatter.jpg")
+
     print("here")
