@@ -10,6 +10,7 @@ import clip
 from PIL import Image 
 import numpy as np
 from sklearn.metrics import roc_auc_score
+from pathlib import Path 
 
 from utils import gaussian_blur, get_coreset
 
@@ -213,3 +214,28 @@ class PatchCore(torch.nn.Module):
         segm_map = gaussian_blur(segm_map)              # Gaussian blur of kernel width = 4
 
         return s, segm_map
+    
+    def save(self,
+            save_path: str = "checkpoints"
+            ):
+        if Path(save_path).parent.exists():
+            pass 
+        else: 
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
+        torch.save({
+            "model": self.model.state_dict(),
+            "resize": self.resize,
+            "avg": self.avg,
+            "memory_bank": self.memory_bank
+        }, save_path)
+
+    def load(self,
+             checkpoint_path: str
+             ):
+        checkpoint = torch.load(checkpoint_path)
+        
+        self.model.load_state_dict(checkpoint["model"])
+        self.resize = checkpoint["resize"]
+        self.avg = checkpoint["avg"]
+        self.memory_bank = checkpoint["memory_bank"]
