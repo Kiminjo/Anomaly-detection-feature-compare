@@ -4,6 +4,9 @@ from torchvision import transforms
 
 import numpy as np
 import PIL
+import torch.nn.functional as F 
+from skimage import morphology
+from typing import Tuple
 from PIL import ImageFilter
 from sklearn import random_projection
 from tqdm import tqdm
@@ -122,3 +125,37 @@ def display_backbones():
 
 def display_MVTec_classes():
     print(mvtec_classes())
+
+def compute_mask(anomaly_map: np.array,
+                 threshold: float = 200,
+                 kernel_size: int = 4,
+                 origin_img_size: Tuple[int] = (900, 900)
+                 ):    
+    anomaly_map = (anomaly_map - anomaly_map.min()) / np.ptp(anomaly_map)
+    anomaly_map = anomaly_map * 255
+    anomaly_map = anomaly_map.astype(np.uint8)
+    # anomaly_map = cv2.resize(anomaly_map[0], dsize=origin_img_size)
+
+    mask = np.zeros_like(anomaly_map)
+    mask[anomaly_map > threshold] = 1
+    mask = mask[0]
+    # mask = cv2.resize(mask, dsize=origin_img_size)
+
+    kernel = morphology.disk(kernel_size)
+    mask = morphology.opening(mask, kernel)
+    return mask
+
+def extract_features(model,
+                     image: torch.tensor,
+                     output_size: int = 224):
+    feature_maps = model.forward(image.unsqueeze(0))
+    avg = torch.nn.AvgPool2d(3, stride=1)
+    fmap_size = feature_maps[0].shape[-2]         # Feature map sizes h, w
+    resize = torch.nn.AdaptiveAvgPool2d(fmap_size)
+    resized_maps = [resize(avg(fmap)) for fmap in feature_maps]
+    concated_feature = torch.cat(resized_maps, 1)
+    resized_feature = F.interpolate(concated_feature,
+                                    size=(output_size, output_size),
+                                    mode="bilinear")[0]
+    return resized_feature
+    

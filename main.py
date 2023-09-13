@@ -1,25 +1,26 @@
 from data import MVTecDataset, mvtec_classes, DEFAULT_SIZE
 from models import PatchCore
-from utils import backbones, dataset_scale_factor, tsne, pca
+from utils import backbones, dataset_scale_factor, tsne, pca, compute_mask, extract_features
 
 # For inference 
-import numpy as np
 from pathlib import Path 
+import numpy as np
 from PIL import Image
 import torch 
+import cv2
+from torch.nn import functional as F 
 from torchvision import transforms
-from sklearn.cluster import KMeans
-import matplotlib.pyplot as plt
-import seaborn as sns  
+
 
 ALL_CLASSES = mvtec_classes()
 
-
-def run_model(
-        classes: list = ALL_CLASSES,
-        backbone: str = 'WideResNet50'
+def main(classes: list = ALL_CLASSES,
+         backbone: str = 'WideResNet50',
+         checkpoint_path: str = "",
+         mode: str = "train"
 ) -> None:
 
+    assert mode in ["train", "test", "predict"]
     f_coreset = 0.1
 
     # Vanilla or Clip version
@@ -44,9 +45,17 @@ def run_model(
         train_dl, test_dl = MVTecDataset(cls, size=size, vanilla=vanilla).get_dataloaders()
         patch_core = PatchCore(f_coreset, vanilla=vanilla, backbone=backbones[backbone], image_size=size)
 
-        print(f'\nClass {cls}:')
-        print(f'Training...')
-        patch_core.fit(train_dl, scale=dataset_scale_factor[backbone])
+        if mode == "predict":
+            patch_core.load(checkpoint_path=checkpoint_path)
+            return patch_core
+        
+        if mode == "test": 
+            patch_core.load(checkpoint_path=checkpoint_path)
+
+        if mode == "train":
+            print(f'\nClass {cls}:')
+            print(f'Training...')
+            patch_core.fit(train_dl, scale=dataset_scale_factor[backbone])
 
         print(f'Testing...')
         image_rocauc, pixel_rocauc = patch_core.evaluate(test_dl)
@@ -65,14 +74,14 @@ def run_model(
     print(f'- Average image-level ROC AUC = {average_image_rocauc:.3f}\n')
     print(f'- Average pixel-level ROC AUC = {average_pixel_rocauc:.3f}\n')
 
+    if mode=="train":
+        patch_core.save(save_path=checkpoint_path)
+
     return patch_core
 
-
-if __name__ == "__main__":
-    classes = "bottle"
-    model = run_model(backbone='WideResNet50',
-                      classes=[classes])
-    
+def predict(model,
+            threshold: int
+            ):
     # Inference image 
     DATA_PATH = f"datasets/{classes}"
     DEFAULT_SIZE = 224
@@ -102,52 +111,75 @@ if __name__ == "__main__":
         elif "contamination" in str(p):
             labels.append(3)
 
-    features, predictions = [], []
+    features = []
     for p in paths:
         # Image Load 
         img = Image.open(str(p)).convert("RGB")
+        resized_img = img.resize((DEFAULT_SIZE, DEFAULT_SIZE))
         tensor_img = transform(img)
 
         # Extract features
-        feature_maps = model.forward(tensor_img.unsqueeze(0))
-        avg = torch.nn.AvgPool2d(3, stride=1)
-        fmap_size = feature_maps[0].shape[-2]         # Feature map sizes h, w
-        resize = torch.nn.AdaptiveAvgPool2d(fmap_size)
-        resized_maps = [resize(avg(fmap)) for fmap in feature_maps]
-        concated_feature = torch.cat(resized_maps, 1)
-        concated_feature = concated_feature.flatten()
-        features.append(concated_feature.detach().cpu().numpy())
-
+        feature = extract_features(model=model,
+                                  image=tensor_img,
+                                  output_size=DEFAULT_SIZE)
         # Prediction 
         preds = model.predict(tensor_img.unsqueeze(0))
-        predictions.append(preds)
+        anomaly_score, anomaly_map = preds
+        anomaly_score = anomaly_score.item()
+
+        # Make binary mask 
+        pred_mask = compute_mask(anomaly_map=anomaly_map.numpy(),
+                                 threshold=threshold) 
+        pred_mask = pred_mask if anomaly_score > 0.9 else np.zeros_like(pred_mask)
+
+        # Display anomaly mask on origin image 
+        color_mask = np.zeros(pred_mask.shape + (3,), 
+                              dtype=np.uint8)
+        color_mask[:,:,-1] = (pred_mask * 255)
+        displayed_img = cv2.addWeighted(color_mask, 0.4, np.array(resized_img), 0.6, 0)
+
+        # Feature extract 
+        feature = feature * pred_mask
+        features.append(feature)
+        
+        cv2.imwrite(f"results/{p.parent.name}_{p.stem}_{anomaly_score:.3f}.jpg", displayed_img)
     
-    features = np.array(features)
-    pcaed_features = pca(features)
+    return features, labels 
 
-    kmeans = KMeans(n_clusters=4)
-    full_cls = kmeans.fit_predict(features)
-    pcaed_cls = kmeans.fit_predict(pcaed_features)
+if __name__ == "__main__":
+    classes = "bottle"
+    weight_dir = Path("checkpoints")
+    checkpoint_path = weight_dir / "weight.pt"
+    mode = "predict"
 
-    tsne_features = tsne(pcaed_features)
-    x, y = tsne_features[:, 0], tsne_features[:, 1]
-    sns.scatterplot(x=x,
-                    y=y,
-                    hue=labels,
-                    style=full_cls,
-                    palette="tab10"
+    if mode == "train":
+        model = main(backbone='WideResNet50',
+                    classes=[classes],
+                    save_path=str(checkpoint_path),
+                    mode=mode
                     )
-    plt.legend(labels=["ok", "large", "small", "cont"])
-    plt.savefig("full_scatter.jpg")
-    plt.clf()
-
-    sns.scatterplot(x=x,
-                    y=y,
-                    hue=labels,
-                    style=pcaed_cls,
-                    palette="tab10"
+    elif mode == "test":
+        model = main(backbone='WideResNet50',
+                    classes=[classes],
+                    checkpoint_path=str(checkpoint_path),
+                    mode=mode
                     )
-    plt.legend(labels=["ok", "large", "small", "cont"])
-    plt.savefig("pcaed_scatter.jpg")
+    elif mode == "predict":
+        model = main(backbone="WideResNet50",
+                     classes=[classes],
+                     checkpoint_path=str(checkpoint_path),
+                     mode=mode
+                     )
+        features, labels = predict(model,
+                                   threshold=180)
+        
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.model_selection import train_test_split
+
+        feature_array = np.array([f.flatten().numpy() for f in features])
+        X_train, X_test, y_train, y_test = train_test_split(feature_array, labels, test_size=0.1)
+        clf = RandomForestClassifier(max_depth=5, random_state=5)
+        clf.fit(X_train, y_train)
+        pred = clf.predict(X_test)
 
     print("here")
