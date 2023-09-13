@@ -1,8 +1,7 @@
 # pycache
 **/__pycache__/
 
-# datasets
-datasets/
-
-# models
+# model, data and result 
 checkpoints/
+datasets/
+results/
