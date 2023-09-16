@@ -2,7 +2,6 @@ import torch
 from torch import tensor
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
-import torchvision
 import torchvision.transforms as T
 
 from tqdm import tqdm
@@ -12,8 +11,8 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 from pathlib import Path 
 
-from utils import gaussian_blur, get_coreset
-
+from utils import gaussian_blur, get_coreset, backbones
+from data import DEFAULT_SIZE
 
 class PatchCore(torch.nn.Module):
     def __init__(
@@ -141,21 +140,22 @@ class PatchCore(torch.nn.Module):
         pixel_labels = []
 
         for sample, mask, label in tqdm(test_dataloader):
-
             image_labels.append(label)
-            pixel_labels.extend(mask.flatten().numpy())
-
             score, segm_map = self.predict(sample)  # Anomaly Detection
-
             image_preds.append(score.numpy())
-            pixel_preds.extend(segm_map.flatten().numpy())
+            if mask != [0]:
+                pixel_labels.extend(mask.flatten().numpy())
+                pixel_preds.extend(segm_map.flatten().numpy())
 
         image_labels = np.stack(image_labels)
         image_preds = np.stack(image_preds)
 
         # Compute ROC AUC for prediction scores
         image_level_rocauc = roc_auc_score(image_labels, image_preds)
-        pixel_level_rocauc = roc_auc_score(pixel_labels, pixel_preds)
+        if mask != [0]:
+            pixel_level_rocauc = roc_auc_score(pixel_labels, pixel_preds)
+        else: 
+            pixel_level_rocauc = 0
 
         return image_level_rocauc, pixel_level_rocauc
 
@@ -239,3 +239,34 @@ class PatchCore(torch.nn.Module):
         self.resize = checkpoint["resize"]
         self.avg = checkpoint["avg"]
         self.memory_bank = checkpoint["memory_bank"]
+
+def load_model(backbone: str = 'WideResNet50',
+               checkpoint_path: str = "", 
+               f_coreset: float = 0.1
+               ) -> PatchCore:
+
+    # Vanilla or Clip version
+    vanilla = backbone == "WideResNet50"
+
+    results = {}    # key = class, Value = [image-level ROC AUC, pixel-level ROC AUC]
+    if vanilla:
+        size = DEFAULT_SIZE
+    elif backbone == 'ResNet50':    # RN50
+        size = 224
+    elif backbone == 'ResNet50-4':  # RN50x4
+        size = 288
+    elif backbone == 'ResNet50-16': # RN50x16
+        size = 384
+    elif backbone == 'ResNet101':   # RN50x101
+        size = 224
+    else:
+        raise Exception('You can use the following nets: ResNet50, ResNet50-4, ResNet50-16, ResNet50-64, ResNet101')
+
+    print(f'Load Model...')
+    patch_core = PatchCore(f_coreset, 
+                            vanilla=vanilla, 
+                            backbone=backbones[backbone], 
+                            image_size=size)
+    
+    patch_core.load(checkpoint_path=checkpoint_path)
+    return patch_core

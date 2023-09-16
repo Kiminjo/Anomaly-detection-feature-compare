@@ -148,7 +148,7 @@ def compute_mask(anomaly_map: np.array,
 def extract_features(model,
                      image: torch.tensor,
                      output_size: int = 224):
-    feature_maps = model.forward(image.unsqueeze(0))
+    feature_maps = model.forward(image)
     avg = torch.nn.AvgPool2d(3, stride=1)
     fmap_size = feature_maps[0].shape[-2]         # Feature map sizes h, w
     resize = torch.nn.AdaptiveAvgPool2d(fmap_size)
@@ -156,6 +156,6 @@ def extract_features(model,
     concated_feature = torch.cat(resized_maps, 1)
     resized_feature = F.interpolate(concated_feature,
                                     size=(output_size, output_size),
-                                    mode="bilinear")[0]
+                                    mode="bilinear")
     return resized_feature
     
