@@ -12,6 +12,7 @@ import cv2
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+import joblib
 from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from typing import List, Tuple
@@ -161,19 +162,20 @@ if __name__=='__main__':
                               shuffle=False)
 
 
-    # Component 1. Train PatchCore Model 
-    checkpoint = "checkpoints/train_test.pt"
-    patchcore_train(train_loader=train_loader,
-                    valid_loader=valid_loader,
-                    checkpoint_path=checkpoint)
+    # # Component 1. Train PatchCore Model 
+    # checkpoint = "checkpoints/train_test.pt"
+    # patchcore_train(train_loader=train_loader,
+    #                 valid_loader=valid_loader,
+    #                 checkpoint_path=checkpoint)
     
     # Component 2. Load Model and Inference 
-    checkpoint = "checkpoints/train_test.pt"
+    patchcore_checkpoint = "checkpoints/train_test.pt"
     features, prediction_masks, anomaly_scores = patchcore_inference(loader=valid_loader,
-                                                                     checkpoint=checkpoint)
+                                                                     checkpoint=patchcore_checkpoint)
     
     # Component 3. Split Mask per objects
     # Component 4. Get Feature of object 
+    rf_checkpoint = "checkpoints/rf.pkl"
     X, y = [], []
     print("Feature Process...")
     for feature, pred_mask, anomaly_score, cls_label in tqdm(zip(features, prediction_masks, anomaly_scores, valid_labels), total=len(features)): 
@@ -210,4 +212,5 @@ if __name__=='__main__':
     print(y_test)
     print(rf_result)
 
-    
+    # Save Boosting Model
+    joblib.dump(clf, rf_checkpoint)

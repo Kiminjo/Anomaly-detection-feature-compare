@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import interpolate
 from pathlib import Path
 import numpy as np
+import joblib
 import cv2 
 from typing import List, Tuple
 
@@ -49,7 +50,7 @@ def patchcore_inference(backbone: str = "WideResNet50",
                         checkpoint: str = ""
                         ):
     # 1. Load image 
-    data_dir = Path("datasets/bottle/test/broken_large")
+    data_dir = Path("datasets/bottle/test/contamination")
     data_paths = [str(p) for p in data_dir.glob("*.png")]
 
     inference_dataset = InferenceDataset(data_path=data_paths)
@@ -98,22 +99,34 @@ def get_objects_feature(feature: List[torch.tensor],
         output_features.append(object_feature.flatten())
     return output_features
 
-
-
 if __name__=='__main__':
-    checkpoint = "checkpoints/weight.pt"
+    patchcore_checkpoint = "checkpoints/weight.pt"
+    rf_checkpoint = "checkpoints/rf.pkl"
     
     # Component 1. Inference using PathCore 
-    print("patchcore inference...") 
-    features, prediction_masks, anomaly_scores = patchcore_inference(checkpoint=checkpoint)
+    print("Patchcore inference...") 
+    features, prediction_masks, anomaly_scores = patchcore_inference(checkpoint=patchcore_checkpoint)
 
     # Component 2. Split mask per objects 
     # Component 3. Get Feature of object
+    X = []
+    print("Feature Process...")
     for feature, pred_mask, anomaly_score in zip(features, prediction_masks, anomaly_scores): 
         pred_mask_infos: List[SplittedMaskInfo] = split_mask(pred_mask)
         object_features: List[torch.tensor] = get_objects_feature(feature=feature, 
                                                                  mask_infos=pred_mask_infos)
-        print("here")
+        if len(object_features) > 0: 
+            X += object_features
+    X = np.vstack(X)
+    
+    # Component 4. Inference Using Random Forest Classifier
+    print("Random Forest Inference...")
+    clf = joblib.load(rf_checkpoint)
+
+    rf_result = clf.predict(X)
+    print(rf_result)
+
+            
 
 
         
