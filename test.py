@@ -1,7 +1,7 @@
 
 from data import  InferenceDataset, DEFAULT_SIZE
 from models import load_model
-from utils import compute_mask, extract_features
+from utils import compute_mask, extract_features, visualize_cls_mask
 from utils import SplittedMaskInfo
 
 import torch
@@ -9,9 +9,12 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import interpolate
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm 
 import joblib
 import cv2 
 from typing import List, Tuple
+import warnings
+warnings.filterwarnings(action="ignore")
 
 def patchcore_predict(model,
                       loader: DataLoader,
@@ -19,12 +22,11 @@ def patchcore_predict(model,
                       mask_threshold: int = 180
                       ) -> Tuple[List[torch.tensor], List[np.array], List[float]]:
     features, prediction_masks, anomaly_scores = [], [], []
-    for img in loader:
+    for img in tqdm(loader):
         # Extract features
         feature = extract_features(model=model,
                                    image=img,
                                    output_size=DEFAULT_SIZE)
-
         # Prediction 
         preds = model.predict(img)
         anomaly_score, anomaly_map = preds
@@ -35,37 +37,22 @@ def patchcore_predict(model,
                                  threshold=mask_threshold) 
         pred_mask = pred_mask if anomaly_score > anomaly_score_threshold else np.zeros_like(pred_mask)
 
-        # # Display anomaly mask on origin image 
-        # color_mask = np.zeros(pred_mask.shape + (3,), 
-        #                       dtype=np.uint8)
-        # color_mask[:,:,-1] = (pred_mask * 255)
-        # displayed_img = cv2.addWeighted(color_mask, 0.4, np.array(resized_img), 0.6, 0)
-
         features.append(feature)    
         prediction_masks.append(pred_mask)
         anomaly_scores.append(anomaly_score)
     return features, prediction_masks, anomaly_scores
 
-def patchcore_inference(backbone: str = "WideResNet50",
+def patchcore_inference(loader: DataLoader,
+                        backbone: str = "WideResNet50",
                         checkpoint: str = ""
                         ):
-    # 1. Load image 
-    data_dir = Path("datasets/bottle/test/contamination")
-    data_paths = [str(p) for p in data_dir.glob("*.png")]
-
-    inference_dataset = InferenceDataset(data_path=data_paths)
-    inference_dataloader = DataLoader(inference_dataset,
-                                      batch_size=1,
-                                      num_workers=8,
-                                      shuffle=False)
-    
-    # 2. Load patchcore model 
+    # 1. Load patchcore model 
     patchcore_model = load_model(backbone=backbone,
                                  checkpoint_path=checkpoint)
     
-    # 3. Get feature, anomaly score and prediction mask 
+    # 2. Get feature, anomaly score and prediction mask 
     features, prediction_masks, anomaly_scores= patchcore_predict(model=patchcore_model,
-                                                                  loader=inference_dataloader)
+                                                                  loader=loader)
     
     return features, prediction_masks, anomaly_scores
 
@@ -73,7 +60,7 @@ def split_mask(mask: np.array,
                area_threshold: int = 50
                ): 
     object_infos = [] 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
     for label in range(1, num_labels):
         area = stats[label, cv2.CC_STAT_AREA]
@@ -102,29 +89,42 @@ def get_objects_feature(feature: List[torch.tensor],
 if __name__=='__main__':
     patchcore_checkpoint = "checkpoints/weight.pt"
     rf_checkpoint = "checkpoints/rf.pkl"
+    data_dir = Path("datasets/bottle/test/broken_large")
+
+    # Component 0. Get Inference Loader  
+    data_paths = [str(p) for p in data_dir.glob("*.png")]
+
+    inference_dataset = InferenceDataset(data_path=data_paths)
+    inference_dataloader = DataLoader(inference_dataset,
+                                      batch_size=1,
+                                      num_workers=8,
+                                      shuffle=False)
     
     # Component 1. Inference using PathCore 
     print("Patchcore inference...") 
-    features, prediction_masks, anomaly_scores = patchcore_inference(checkpoint=patchcore_checkpoint)
+    features, prediction_masks, anomaly_scores = patchcore_inference(loader=inference_dataloader,
+                                                                     checkpoint=patchcore_checkpoint)
 
     # Component 2. Split mask per objects 
     # Component 3. Get Feature of object
-    X = []
-    print("Feature Process...")
-    for feature, pred_mask, anomaly_score in zip(features, prediction_masks, anomaly_scores): 
+    print("Load Random Forest Model...")
+    clf = joblib.load(rf_checkpoint)
+    
+    print("Feature Process And Radom Forest Inference...")
+    for img_idx, (p, feature, pred_mask, anomaly_score) in tqdm(enumerate(zip(data_paths, features, prediction_masks, anomaly_scores)),
+                                                                total=len(data_paths)): 
         pred_mask_infos: List[SplittedMaskInfo] = split_mask(pred_mask)
         object_features: List[torch.tensor] = get_objects_feature(feature=feature, 
                                                                  mask_infos=pred_mask_infos)
         if len(object_features) > 0: 
-            X += object_features
-    X = np.vstack(X)
-    
-    # Component 4. Inference Using Random Forest Classifier
-    print("Random Forest Inference...")
-    clf = joblib.load(rf_checkpoint)
+            for mask_info, object_feature in zip(pred_mask_infos, object_features):
+                mask = mask_info["mask"]
+                cls = clf.predict(np.expand_dims(object_feature, axis=0))
+                visualize_cls_mask(origin_img_path=p,
+                                   mask=mask,
+                                   cls=cls)
 
-    rf_result = clf.predict(X)
-    print(rf_result)
+
 
             
 

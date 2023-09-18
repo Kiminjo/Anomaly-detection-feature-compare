@@ -193,9 +193,6 @@ if __name__=='__main__':
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     clf = RandomForestClassifier(n_estimators=300,
                                  max_depth=3)
-    # clf = LGBMClassifier(boosting_type="gbdt",
-    #                      max_depth=5,
-    #                      n_jobs=16)
     start = time.time()
     clf.fit(X_train,
             y_train)
