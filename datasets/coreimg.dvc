@@ -1,0 +1,5 @@
+outs:
+- md5: 68b4a47513552a7a7a3961dddae6c72a.dir
+  size: 45904880401
+  nfiles: 16077
+  path: coreimg
