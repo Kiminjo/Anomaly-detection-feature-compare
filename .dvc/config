@@ -1,0 +1,8 @@
+[core]
+    remote = origin
+[cache]
+    dir = /data/dvc
+    shared = group
+    type = symlink
+['remote "origin"']
+    url = ssh://10.10.100.12:/mnt/hdd/dvc
