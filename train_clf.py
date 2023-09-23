@@ -32,7 +32,6 @@ def patchcore_predict(model,
         feature = extract_features(model=model,
                                    image=img,
                                    output_size=DEFAULT_SIZE)
-
         # Prediction 
         preds = model.predict(img)
         anomaly_score, anomaly_map = preds
@@ -89,19 +88,20 @@ def get_objects_feature(feature: List[torch.tensor],
         object_feature = interpolate(cropped_feature,
                                      size=(DEFAULT_SIZE, DEFAULT_SIZE),
                                      mode="bilinear")
+        object_feature = torch.mean(object_feature, dim=(2, 3))
         output_features.append(object_feature.flatten().numpy())
     return output_features
 
 
 if __name__=='__main__':
-    data_dir = Path("datasets/bottle/")
-    defects = ["good", "broken_large", "broken_small", "contamination"]
+    data_dir = Path("datasets/coreimg/bottom")
+    defects = ["정상", "밑면01", "밑면02", "밑면03"]
     
     # Componet 0. Get Train and Valid Loader 
-    train_data_paths = [str(p) for p in (data_dir / "train/good").glob("*.png")]
+    train_data_paths = [str(p) for p in (data_dir / "정상").glob("**/*.bmp")] + [str(p) for p in (data_dir / "정상").glob("**/*.png")]
     valid_data_paths, valid_labels = [], []
     for defect_idx, defect in enumerate(defects): 
-        img_paths = [str(p) for p in (data_dir / "test" / defect).glob("*.png")]
+        img_paths = [str(p) for p in (data_dir / defect).glob("**/*.bmp")] + [str(p) for p in (data_dir / defect).glob("**/*.png")]
         labels = [defect_idx] * len(img_paths)
 
         valid_data_paths += img_paths
@@ -120,13 +120,13 @@ if __name__=='__main__':
                               shuffle=False)
     
     # Component 1. Load Model and Inference 
-    patchcore_checkpoint = "checkpoints/split_pipeline.pt"
+    patchcore_checkpoint = "checkpoints/coreimg_bottom.pt"
     features, prediction_masks, anomaly_scores = patchcore_inference(loader=valid_loader,
                                                                      checkpoint=patchcore_checkpoint)
     
     # Component 2. Split Mask per objects
     # Component 3. Get Feature of object 
-    rf_checkpoint = "checkpoints/rf_test.pkl"
+    rf_checkpoint = "checkpoints/coreimg_bottom.pkl"
     X, y = [], []
     print("Feature Process...")
     for feature, pred_mask, anomaly_score, cls_label in tqdm(zip(features, prediction_masks, anomaly_scores, valid_labels), total=len(features)): 
@@ -136,17 +136,16 @@ if __name__=='__main__':
         if len(object_features) > 0:
             X += object_features
             y += [cls_label] * len(object_features)
-    X = np.vstack(X) 
+    X = np.vstack(X)
     y = np.array(y)
 
     # Component 4. Train Random Forest Classifier 
     print("Random Forest Training...")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-    clf = RandomForestClassifier(n_estimators=300,
-                                 max_depth=3)
+    # clf = RandomForestClassifier(n_estimators=500)
+    clf = RandomForestClassifier(n_estimators=300)
     start = time.time()
-    clf.fit(X_train,
-            y_train)
+    clf.fit(X_train, y_train)
     end = time.time()
     print(f"Random forest training time: {end - start}")
     rf_result = clf.predict(X_test)

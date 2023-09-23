@@ -1,10 +1,24 @@
+import torch 
 from torch.utils.data import Dataset
 from torchvision import transforms
 from PIL import Image
+import numpy as np
 from typing import List 
 
 from data import DEFAULT_RESIZE, DEFAULT_SIZE, IMAGENET_MEAN, IMAGENET_STD
 
+class ExpandChannelsTransform:
+    def __init__(self, target_channels):
+        self.target_channels = target_channels
+
+    def __call__(self, img):
+        img = np.array(img)
+        img = np.expand_dims(img, axis=-1)
+        if img.shape[-1] == 1:
+            img = np.concatenate([img] * self.target_channels, axis=-1)
+        img = Image.fromarray(img)
+        return img
+    
 class TrainDataset(Dataset): 
     def __init__(self,
                  data_path: List[str]
@@ -12,6 +26,7 @@ class TrainDataset(Dataset):
         super().__init__()
         self.paths = data_path 
         self.transform = transforms.Compose([
+            ExpandChannelsTransform(target_channels=3),
             transforms.Resize(DEFAULT_RESIZE, interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.CenterCrop(DEFAULT_SIZE),  
             transforms.ToTensor(),  
@@ -36,6 +51,7 @@ class ValidDataset(Dataset):
         self.paths = data_path
         self.labels = labels 
         self.transform = transforms.Compose([
+            ExpandChannelsTransform(target_channels=3),
             transforms.Resize(DEFAULT_RESIZE, interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.CenterCrop(DEFAULT_SIZE),  
             transforms.ToTensor(),  

@@ -55,15 +55,14 @@ def patchcore_train(train_loader: DataLoader,
 
 
 if __name__=='__main__':
-    checkpoint = "checkpoints/weight.pt"
-    data_dir = Path("datasets/bottle/")
-    defects = ["good", "broken_large", "broken_small", "contamination"]
+    data_dir = Path("datasets/coreimg/bottom")
+    defects = ["밑면01", "밑면02", "밑면03"]
 
     # Componet 0. Get Train and Valid Loader 
-    train_data_paths = [str(p) for p in (data_dir / "train/good").glob("*.png")]
+    train_data_paths = [str(p) for p in (data_dir / "정상").glob("**/*.bmp")] + [str(p) for p in (data_dir / "정상").glob("**/*.png")]
     valid_data_paths, valid_labels = [], []
     for defect_idx, defect in enumerate(defects): 
-        img_paths = [str(p) for p in (data_dir / "test" / defect).glob("*.png")]
+        img_paths = [str(p) for p in (data_dir / defect).glob("**/*.bmp")] + [str(p) for p in (data_dir / defect).glob("**/*.png")]
         labels = [defect_idx] * len(img_paths)
 
         valid_data_paths += img_paths
@@ -82,7 +81,7 @@ if __name__=='__main__':
                               shuffle=False)
     
     # Component 1. Train PatchCore Model 
-    checkpoint = "checkpoints/split_pipeline.pt"
+    checkpoint = "checkpoints/coreimg_bottom.pt"
     patchcore_train(train_loader=train_loader,
                     valid_loader=valid_loader,
                     checkpoint_path=checkpoint)
